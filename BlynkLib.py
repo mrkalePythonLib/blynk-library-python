@@ -5,6 +5,7 @@ _VERSION = "0.2.1"
 import struct
 import time
 import os
+import platform
 
 try:
     import machine
@@ -14,7 +15,7 @@ except ImportError:
     gettime = lambda: int(time.time() * 1000)
 
 def dummy(*args):
-    pass 
+    pass
 
 MSG_RSP = const(0)
 MSG_LOGIN = const(2)
@@ -45,7 +46,7 @@ print("""
    / _ )/ /_ _____  / /__
   / _  / / // / _ \\/  '_/
  /____/_/\\_, /_//_/_/\\_\\
-        /___/ for Python v""" + _VERSION + " (" + os.uname()[0] + ")\n")
+        /___/ for Python v""" + _VERSION + " (" + platform.uname()[0] + ")\n")
 
 class BlynkProtocol:
     def __init__(self, auth, heartbeat=10, buffin=1024, log=None):
@@ -112,14 +113,14 @@ class BlynkProtocol:
             self.msg_id += 1
             if self.msg_id > 0xFFFF:
                 self.msg_id = 1
-                
+
         if cmd == MSG_RSP:
             data = b''
             dlen = args[0]
         else:
             data = ('\0'.join(map(str, args))).encode('utf8')
             dlen = len(data)
-        
+
         self.log('<', cmd, id, '|', *args)
         msg = struct.pack("!BHH", cmd, id, dlen) + data
         self.lastSend = gettime()
@@ -149,7 +150,7 @@ class BlynkProtocol:
              now - self.lastRecv > self.heartbeat)):
             self._send(MSG_PING)
             self.lastPing = now
-        
+
         if data != None and len(data):
             self.bin += data
 
@@ -159,7 +160,7 @@ class BlynkProtocol:
 
             cmd, i, dlen = struct.unpack("!BHH", self.bin[:5])
             if i == 0: return self.disconnect()
-                      
+
             self.lastRecv = now
             if cmd == MSG_RSP:
                 self.bin = self.bin[5:]
@@ -242,4 +243,3 @@ class Blynk(BlynkProtocol):
         except: # TODO: handle disconnect
             pass
         self.process(data)
-
