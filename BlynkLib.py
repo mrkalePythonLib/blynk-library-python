@@ -1,10 +1,11 @@
 # Copyright (c) 2015-2019 Volodymyr Shymanskyy. See the file LICENSE for copying permission.
 
-_VERSION = "0.2.0"
+_VERSION = "0.2.1"
 
 import struct
 import time
 import os
+import platform
 
 try:
     import machine
@@ -14,14 +15,13 @@ except ImportError:
     gettime = lambda: int(time.time() * 1000)
 
 def dummy(*args):
-    pass 
+    pass
 
 MSG_RSP = const(0)
 MSG_LOGIN = const(2)
 MSG_PING  = const(6)
 
 MSG_TWEET = const(12)
-MSG_EMAIL = const(13)
 MSG_NOTIFY = const(14)
 MSG_BRIDGE = const(15)
 MSG_HW_SYNC = const(16)
@@ -46,7 +46,7 @@ print("""
    / _ )/ /_ _____  / /__
   / _  / / // / _ \\/  '_/
  /____/_/\\_, /_//_/_/\\_\\
-        /___/ for Python v""" + _VERSION + " (" + os.uname()[0] + ")\n")
+        /___/ for Python v""" + _VERSION + " (" + platform.uname()[0] + ")\n")
 
 class BlynkProtocol:
     def __init__(self, auth, heartbeat=10, buffin=1024, log=None):
@@ -58,7 +58,19 @@ class BlynkProtocol:
         self.state = DISCONNECTED
         self.connect()
 
+    # These are mainly for backward-compatibility you can use "blynk.on()" instead
     def ON(blynk, evt):
+        return blynk.on(evt)
+    def VIRTUAL_READ(blynk, pin):
+        return blynk.on("readV"+str(pin))
+    def VIRTUAL_WRITE(blynk, pin):
+        return blynk.on("V"+str(pin))
+
+    def on(blynk, evt, func=None):
+        if func:
+            blynk.callbacks[evt] = func
+            return
+
         class Decorator:
             def __init__(self, func):
                 self.func = func
@@ -66,28 +78,6 @@ class BlynkProtocol:
             def __call__(self):
                 return self.func()
         return Decorator
-
-    # These are mainly for backward-compatibility you can use "blynk.ON()" instead
-    def VIRTUAL_READ(blynk, pin):
-        class Decorator():
-            def __init__(self, func):
-                self.func = func
-                blynk.callbacks["readV"+str(pin)] = func
-            def __call__(self):
-                return self.func()
-        return Decorator
-
-    def VIRTUAL_WRITE(blynk, pin):
-        class Decorator():
-            def __init__(self, func):
-                self.func = func
-                blynk.callbacks["V"+str(pin)] = func
-            def __call__(self):
-                return self.func()
-        return Decorator
-
-    def on(self, evt, func):
-        self.callbacks[evt] = func
 
     def emit(self, evt, *a, **kv):
         self.log("Event:", evt, "->", *a)
@@ -116,21 +106,21 @@ class BlynkProtocol:
             self._send(MSG_EVENT_LOG, event, descr)
 
     def _send(self, cmd, *args, **kwargs):
-        if "id" in kwargs:
-            id = kwargs.id
+        if 'id' in kwargs:
+            id = kwargs.get('id')
         else:
             id = self.msg_id
             self.msg_id += 1
             if self.msg_id > 0xFFFF:
                 self.msg_id = 1
-                
+
         if cmd == MSG_RSP:
             data = b''
             dlen = args[0]
         else:
             data = ('\0'.join(map(str, args))).encode('utf8')
             dlen = len(data)
-        
+
         self.log('<', cmd, id, '|', *args)
         msg = struct.pack("!BHH", cmd, id, dlen) + data
         self.lastSend = gettime()
@@ -146,10 +136,11 @@ class BlynkProtocol:
 
     def disconnect(self):
         if self.state == DISCONNECTED: return
+        self.bin = b""
         self.state = DISCONNECTED
         self.emit('disconnected')
 
-    def process(self, data=b''):
+    def process(self, data=None):
         if not (self.state == CONNECTING or self.state == CONNECTED): return
         now = gettime()
         if now - self.lastRecv > self.heartbeat+(self.heartbeat//2):
@@ -159,16 +150,17 @@ class BlynkProtocol:
              now - self.lastRecv > self.heartbeat)):
             self._send(MSG_PING)
             self.lastPing = now
-        
+
         if data != None and len(data):
             self.bin += data
 
         while True:
-            if len(self.bin) < 5: return
-            
+            if len(self.bin) < 5:
+                break
+
             cmd, i, dlen = struct.unpack("!BHH", self.bin[:5])
             if i == 0: return self.disconnect()
-                      
+
             self.lastRecv = now
             if cmd == MSG_RSP:
                 self.bin = self.bin[5:]
@@ -191,9 +183,10 @@ class BlynkProtocol:
                 if dlen >= self.buffin:
                     print("Cmd too big: ", dlen)
                     return self.disconnect()
-            
-                if len(self.bin) < 5+dlen: return
-                
+
+                if len(self.bin) < 5+dlen:
+                    break
+
                 data = self.bin[5:5+dlen]
                 self.bin = self.bin[5+dlen:]
 
@@ -250,4 +243,3 @@ class Blynk(BlynkProtocol):
         except: # TODO: handle disconnect
             pass
         self.process(data)
-
